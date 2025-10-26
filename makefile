@@ -7,7 +7,8 @@ test: \
 		main_test.go \
 
 	test "$$(make -s -f testdata/captureCompletions.mk)" = 'echo_target head_tail' \
-	&& go test
+	&& go test \
+	&& ./system_test.sh \
 
 install:
 	go install
