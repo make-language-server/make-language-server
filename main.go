@@ -1,18 +1,53 @@
 package main
 
 import (
+	"context"
+	"io"
 	"os"
 	"regexp"
 
 	tree_sitter_make "github.com/make-language-server/tree-sitter-make/bindings/go"
-	"github.com/tliron/glsp"
-	lsp "github.com/tliron/glsp/protocol_3_16"
-	"github.com/tliron/glsp/server"
+	"github.com/myleshyson/lsprotocol-go/protocol"
+	"github.com/sourcegraph/jsonrpc2"
 	tree_sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-var handler lsp.Handler
+type rpcHandler struct{}
+
 var fileProtocolRegexp *regexp.Regexp
+
+func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, request *jsonrpc2.Request) {
+	switch request.Method {
+	case "initialize":
+		var params protocol.InitializeParams
+		params.UnmarshalJSON(*request.Params)
+		conn.Reply(context, request.ID, protocol.InitializeResult{
+			Capabilities: protocol.ServerCapabilities{
+				CompletionProvider: &protocol.CompletionOptions{},
+			},
+		})
+	case "shutdown":
+		conn.Close()
+	case "textDocument/completion":
+		// TODO: log error. does it work like this?
+		// logMessageNotification := protocol.LogMessageNotification{
+		// 	Method: protocol.WindowLogMessageMethod,
+		// 	Params: protocol.LogMessageParams{
+		// 		Message: "",
+		// 		Type:    protocol.MessageTypeError,
+		// 	},
+		// }
+		var completionParams protocol.CompletionParams
+		completionParams.UnmarshalJSON(*request.Params)
+		text, _ := os.ReadFile(fileProtocolRegexp.ReplaceAllString(string(completionParams.TextDocument.Uri), ""))
+		var completionItems []protocol.CompletionItem
+		completions, _ := captureCompletions(text)
+		for _, completion := range completions {
+			completionItems = append(completionItems, protocol.CompletionItem{Label: completion, InsertText: completion})
+		}
+		conn.Reply(context, request.ID, completionItems)
+	}
+}
 
 func captureCompletions(text []byte) ([]string, error) {
 	parser := tree_sitter.NewParser()
@@ -47,40 +82,26 @@ func captureCompletions(text []byte) ([]string, error) {
 	return completions, nil
 }
 
-func initialize(context *glsp.Context, params *lsp.InitializeParams) (any, error) {
-	return lsp.InitializeResult{
-		Capabilities: handler.CreateServerCapabilities(),
-	}, nil
+type stream struct {
+	in  io.Reader
+	out io.Writer
 }
 
-func shutdown(context *glsp.Context) error {
+func (s stream) Read(b []byte) (int, error) {
+	return os.Stdin.Read(b)
+}
+
+func (s stream) Write(b []byte) (int, error) {
+	return os.Stdout.Write(b)
+}
+
+func (s stream) Close() error {
 	return nil
-}
-
-func textDocumentCompletion(context *glsp.Context, params *lsp.CompletionParams) (any, error) {
-	// TODO: use document synchronization
-	text, err := os.ReadFile(fileProtocolRegexp.ReplaceAllString(params.TextDocument.URI, ""))
-	if err != nil {
-		return nil, err
-	}
-	completions, err := captureCompletions(text)
-	if err != nil {
-		return nil, err
-	}
-	var completionItems []lsp.CompletionItem
-	for _, completion := range completions {
-		completionItems = append(completionItems, lsp.CompletionItem{Label: completion, InsertText: &completion})
-	}
-	return completionItems, nil
 }
 
 func main() {
 	fileProtocolRegexp = regexp.MustCompile("^file://")
-	handler = lsp.Handler{
-		Initialize:             initialize,
-		Shutdown:               shutdown,
-		TextDocumentCompletion: textDocumentCompletion,
-	}
-	server := server.NewServer(&handler, "server", false)
-	server.RunStdio()
+	context := context.Background()
+	conn := jsonrpc2.NewConn(context, jsonrpc2.NewBufferedStream(stream{}, jsonrpc2.VSCodeObjectCodec{}), &rpcHandler{})
+	<-conn.DisconnectNotify()
 }
