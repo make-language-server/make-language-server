@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func Test(t *testing.T) {
+func TestCaptureCompletions(t *testing.T) {
 	makefile, err := os.ReadFile("testdata/captureCompletions.mk")
 	if err != nil {
 		t.Error(err)
@@ -19,5 +19,16 @@ func Test(t *testing.T) {
 	completionsHave, err := captureCompletions(makefile)
 	if !slices.Equal(completionsHave, completionsWant) || err != nil {
 		t.Errorf("completions\nwant: %v\nhave: %v", completionsWant, completionsHave)
+	}
+}
+
+func TestGetDefinitionRange(t *testing.T) {
+	makefile, err := os.ReadFile("testdata/captureCompletions.mk")
+	if err != nil {
+		t.Error(err)
+	}
+	definitionRangeHave, err := getDefinitionRange(makefile, "target_echo_template")
+	if definitionRangeHave.Start.Character != 0 {
+		t.Errorf("nono")
 	}
 }
