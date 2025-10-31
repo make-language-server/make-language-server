@@ -1,0 +1,10 @@
+14:34
+target_echo_template
+{End:{Character:27 Line:2} Start:{Character:7 Line:2}}
+35:34
+12:26
+glued_variable
+{End:{Character:14 Line:1} Start:{Character:0 Line:1}}
+25:44
+snake_glue_function
+{End:{Character:19 Line:0} Start:{Character:0 Line:0}}

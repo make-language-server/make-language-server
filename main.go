@@ -81,40 +81,16 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 		fmt.Fprintf(f, "%s\n", line[begin:end])
 		definitionRange, _ := getDefinitionRange(text, line[begin:end])
 		fmt.Fprintf(f, "%+v\n", definitionRange)
+		r := protocol.Location{Range: definitionRange, Uri: definitionParams.TextDocument.Uri}
+		conn.Reply(context, request.ID, r)
 	}
 }
 
-func getDefinitionRange(text []byte, word string) (protocol.Range, error) {
-	definitionCaptures, err := captureWords(text)
-	if err != nil {
-		return protocol.Range{}, err
-	}
-	for {
-		match, _ := definitionCaptures.Next()
-		if match == nil {
-			break
-		}
-		for _, match := range match.Captures {
-			byteRangeStart, byteRangeEnd := match.Node.ByteRange()
-			startPosition, endPosition := match.Node.StartPosition(), match.Node.EndPosition()
-			if string(text[byteRangeStart:byteRangeEnd]) == word {
-				return protocol.Range{
-					Start: protocol.Position{
-						Character: uint32(startPosition.Column),
-						Line:      uint32(startPosition.Row),
-					},
-					End: protocol.Position{
-						Character: uint32(endPosition.Column),
-						Line:      uint32(endPosition.Row),
-					},
-				}, nil
-			}
-		}
-	}
-	return protocol.Range{}, nil
+type node struct {
+	ByteRangeStart, ByteRangeEnd, StartPositionColumn, StartPositionRow, EndPositionColumn, EndPositionRow uint
 }
 
-func captureWords(text []byte) (tree_sitter.QueryCaptures, error) {
+func captureNodes(text []byte) ([]node, error) {
 	parser := tree_sitter.NewParser()
 	defer parser.Close()
 	language := tree_sitter.NewLanguage(tree_sitter_make.Language())
@@ -127,31 +103,65 @@ func captureWords(text []byte) (tree_sitter.QueryCaptures, error) {
 		(variable_assignment name: (word) @variable_assignment_name)
 	`)
 	if err != nil {
-		return tree_sitter.QueryCaptures{}, err
+		return nil, err
 	}
 	defer completionQuery.Close()
 	completionsQueryCursor := tree_sitter.NewQueryCursor()
 	defer completionsQueryCursor.Close()
-	return completionsQueryCursor.Captures(completionQuery, root, text), nil
-}
-
-func captureCompletions(text []byte) ([]string, error) {
-	completionCaptures, err := captureWords(text)
-	if err != nil {
-		return nil, err
-	}
-	var completions []string
+	captures := completionsQueryCursor.Captures(completionQuery, root, text)
+	var nodes []node
 	for {
-		match, _ := completionCaptures.Next()
+		match, _ := captures.Next()
 		if match == nil {
 			break
 		}
 		for _, match := range match.Captures {
-			begin, end := match.Node.ByteRange()
-			completions = append(completions, string(text[begin:end]))
+			byteRangeStart, byteRangeEnd := match.Node.ByteRange()
+			nodes = append(nodes, node{
+				ByteRangeStart:      byteRangeStart,
+				ByteRangeEnd:        byteRangeEnd,
+				StartPositionColumn: match.Node.StartPosition().Column,
+				StartPositionRow:    match.Node.StartPosition().Row,
+				EndPositionColumn:   match.Node.EndPosition().Column,
+				EndPositionRow:      match.Node.EndPosition().Row,
+			})
 		}
 	}
+	return nodes, nil
+}
+
+func captureCompletions(text []byte) ([]string, error) {
+	nodes, err := captureNodes(text)
+	if err != nil {
+		return nil, err
+	}
+	var completions []string
+	for _, node := range nodes {
+		completions = append(completions, string(text[node.ByteRangeStart:node.ByteRangeEnd]))
+	}
 	return completions, nil
+}
+
+func getDefinitionRange(text []byte, word string) (protocol.Range, error) {
+	nodes, err := captureNodes(text)
+	if err != nil {
+		return protocol.Range{}, err
+	}
+	for _, node := range nodes {
+		if string(text[node.ByteRangeStart:node.ByteRangeEnd]) == word {
+			return protocol.Range{
+				Start: protocol.Position{
+					Character: uint32(node.StartPositionColumn),
+					Line:      uint32(node.StartPositionRow),
+				},
+				End: protocol.Position{
+					Character: uint32(node.EndPositionColumn),
+					Line:      uint32(node.EndPositionRow),
+				},
+			}, nil
+		}
+	}
+	return protocol.Range{}, nil
 }
 
 type stream struct {
