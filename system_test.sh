@@ -6,7 +6,7 @@ content_length(){
 }
 response_have="$({ printf 'Content-Length: %d\r\n\r\n%s' "$(content_length)" "${msg}" ;}|./make-language-server)"
 response_want(){
-printf 'Content-Length: 76\r\n\r\n{"id":1,"result":{"capabilities":{"completionProvider":{}}},"jsonrpc":"2.0"}'
+printf 'Content-Length: 102\r\n\r\n{"id":1,"result":{"capabilities":{"completionProvider":{},"definitionProvider":true}},"jsonrpc":"2.0"}'
 }
 test "$response_have" = "$(response_want)" \
 && echo "${0} success" \

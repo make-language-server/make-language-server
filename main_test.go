@@ -4,6 +4,8 @@ import (
 	"os"
 	"slices"
 	"testing"
+
+	"github.com/myleshyson/lsprotocol-go/protocol"
 )
 
 func TestCaptureCompletions(t *testing.T) {
@@ -28,7 +30,17 @@ func TestGetDefinitionRange(t *testing.T) {
 		t.Error(err)
 	}
 	definitionRangeHave, err := getDefinitionRange(makefile, "target_echo_template")
-	if definitionRangeHave.Start.Character != 0 {
-		t.Errorf("nono")
+	definitionRangeWant := protocol.Range{
+		Start: protocol.Position{
+			Character: 7,
+			Line:      2,
+		},
+		End: protocol.Position{
+			Character: 27,
+			Line:      2,
+		},
+	}
+	if definitionRangeWant.Start.Character != definitionRangeHave.Start.Character || definitionRangeWant.Start.Line != definitionRangeHave.Start.Line {
+		t.Errorf("\ndefinition range want: %+v\ndefinition range have: %+v", definitionRangeWant, definitionRangeHave)
 	}
 }
