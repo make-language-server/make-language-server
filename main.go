@@ -16,6 +16,7 @@ import (
 type rpcHandler struct{}
 
 var fileProtocolRegexp *regexp.Regexp
+var documents map[string]string
 
 func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, request *jsonrpc2.Request) {
 	switch request.Method {
@@ -26,6 +27,7 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 			Capabilities: protocol.ServerCapabilities{
 				CompletionProvider: &protocol.CompletionOptions{},
 				DefinitionProvider: &protocol.Or2[bool, protocol.DefinitionOptions]{Value: true},
+				TextDocumentSync:   &protocol.Or2[protocol.TextDocumentSyncOptions, protocol.TextDocumentSyncKind]{Value: protocol.TextDocumentSyncKindFull},
 			},
 		})
 	case "shutdown":
@@ -78,6 +80,15 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 		definitionRange, _ := getDefinitionRange(text, line[begin:end])
 		result := protocol.Location{Range: definitionRange, Uri: definitionParams.TextDocument.Uri}
 		conn.Reply(context, request.ID, result)
+	case "textDocument/didOpen":
+		// TODO: https://pkg.go.dev/github.com/myleshyson/lsprotocol-go@v1.0.2/protocol#DidOpenTextDocumentParams
+	case "textDocument/didChange":
+		var didChangeTextDocumentParams protocol.DidChangeTextDocumentParams
+		didChangeTextDocumentParams.UnmarshalJSON(*request.Params)
+		document, ok := didChangeTextDocumentParams.ContentChanges[0].Value.(protocol.TextDocumentContentChangeWholeDocument)
+		if ok {
+			// TODO: update documents
+		}
 	}
 }
 
