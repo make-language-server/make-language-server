@@ -1,11 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"os"
-	"regexp"
+	"strings"
 
 	tree_sitter_make "github.com/make-language-server/tree-sitter-make/bindings/go"
 	"github.com/myleshyson/lsprotocol-go/protocol"
@@ -15,24 +14,28 @@ import (
 
 type rpcHandler struct{}
 
-var fileProtocolRegexp *regexp.Regexp
 var documents map[protocol.DocumentUri]string
 
 func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, request *jsonrpc2.Request) {
 	switch request.Method {
 	case "initialize":
 		var params protocol.InitializeParams
-		// v := protocol.TextDocumentSyncKindFull
 		params.UnmarshalJSON(*request.Params)
 		conn.Reply(context, request.ID, protocol.InitializeResult{
 			Capabilities: protocol.ServerCapabilities{
 				CompletionProvider: &protocol.CompletionOptions{},
-				DefinitionProvider: &protocol.Or2[bool, protocol.DefinitionOptions]{Value: true},
-				// TextDocumentSync: &protocol.Or2[protocol.TextDocumentSyncOptions, protocol.TextDocumentSyncKind]{Value: protocol.TextDocumentSyncOptions{
-				// 	Change:    &v,
-				// 	OpenClose: true,
-				// }},
-				TextDocumentSync: &protocol.Or2[protocol.TextDocumentSyncOptions, protocol.TextDocumentSyncKind]{Value: protocol.TextDocumentSyncKindFull},
+				DefinitionProvider: &protocol.Or2[
+					bool,
+					protocol.DefinitionOptions,
+				]{
+					Value: true,
+				},
+				TextDocumentSync: &protocol.Or2[
+					protocol.TextDocumentSyncOptions,
+					protocol.TextDocumentSyncKind,
+				]{
+					Value: protocol.TextDocumentSyncKindFull,
+				},
 			},
 		})
 	case "shutdown":
@@ -46,10 +49,9 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 		// 		Type:    protocol.MessageTypeError,
 		// 	},
 		// }
-		var completionParams protocol.CompletionParams
-		completionParams.UnmarshalJSON(*request.Params)
-		// text, _ := os.ReadFile(fileProtocolRegexp.ReplaceAllString(string(completionParams.TextDocument.Uri), ""))
-		text := documents[completionParams.TextDocument.Uri]
+		var params protocol.CompletionParams
+		params.UnmarshalJSON(*request.Params)
+		text := documents[params.TextDocument.Uri]
 		var completionItems []protocol.CompletionItem
 		completions, _ := captureCompletions([]byte(text))
 		for _, completion := range completions {
@@ -57,12 +59,12 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 		}
 		conn.Reply(context, request.ID, completionItems)
 	case "textDocument/definition":
-		var definitionParams protocol.DefinitionParams
-		definitionParams.UnmarshalJSON(*request.Params)
-		text, _ := os.ReadFile(fileProtocolRegexp.ReplaceAllString(string(definitionParams.TextDocument.Uri), ""))
-		lines := bytes.Split(text, []byte("\n"))
-		line := string(lines[definitionParams.Position.Line])
-		character := int(definitionParams.Position.Character)
+		var params protocol.DefinitionParams
+		params.UnmarshalJSON(*request.Params)
+		text := documents[params.TextDocument.Uri]
+		lines := strings.Split(text, "\n")
+		line := string(lines[params.Position.Line])
+		character := int(params.Position.Character)
 		var begin int
 		var end int
 		for i := 0; character+i > 0; i-- {
@@ -74,7 +76,7 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 				break
 			}
 		}
-		for k := 0; int(definitionParams.Position.Character)+k <= len(line); k++ {
+		for k := 0; int(params.Position.Character)+k <= len(line); k++ {
 			if string(line[character+k]) == " " ||
 				string(line[character+k]) == "," ||
 				string(line[character+k]) == "(" ||
@@ -83,20 +85,23 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 				break
 			}
 		}
-		definitionRange, _ := getDefinitionRange(text, line[begin:end])
-		result := protocol.Location{Range: definitionRange, Uri: definitionParams.TextDocument.Uri}
+		definitionRange, _ := getDefinitionRange([]byte(text), line[begin:end])
+		result := protocol.Location{Range: definitionRange, Uri: params.TextDocument.Uri}
 		conn.Reply(context, request.ID, result)
 	case "textDocument/didOpen":
-		// TODO: https://pkg.go.dev/github.com/myleshyson/lsprotocol-go@v1.0.2/protocol#DidOpenTextDocumentParams
-		var didOpenTextDocumentParams protocol.DidOpenTextDocumentParams
-		didOpenTextDocumentParams.UnmarshalJSON(*request.Params)
-		documents[didOpenTextDocumentParams.TextDocument.Uri] = didOpenTextDocumentParams.TextDocument.Text
+		var params protocol.DidOpenTextDocumentParams
+		params.UnmarshalJSON(*request.Params)
+		documents[params.TextDocument.Uri] = params.TextDocument.Text
+	case "textDocument/didClose":
+		var params protocol.DidCloseTextDocumentParams
+		params.UnmarshalJSON(*request.Params)
+		delete(documents, params.TextDocument.Uri)
 	case "textDocument/didChange":
-		var didChangeTextDocumentParams protocol.DidChangeTextDocumentParams
-		didChangeTextDocumentParams.UnmarshalJSON(*request.Params)
-		document, ok := didChangeTextDocumentParams.ContentChanges[0].Value.(protocol.TextDocumentContentChangeWholeDocument)
+		var params protocol.DidChangeTextDocumentParams
+		params.UnmarshalJSON(*request.Params)
+		document, ok := params.ContentChanges[0].Value.(protocol.TextDocumentContentChangeWholeDocument)
 		if ok {
-			documents[didChangeTextDocumentParams.TextDocument.Uri] = document.Text
+			documents[params.TextDocument.Uri] = document.Text
 		}
 	}
 }
@@ -197,9 +202,12 @@ func (s stream) Close() error {
 }
 
 func main() {
-	fileProtocolRegexp = regexp.MustCompile("^file://")
 	documents = make(map[protocol.DocumentUri]string)
 	context := context.Background()
-	conn := jsonrpc2.NewConn(context, jsonrpc2.NewBufferedStream(stream{}, jsonrpc2.VSCodeObjectCodec{}), &rpcHandler{})
+	conn := jsonrpc2.NewConn(context, jsonrpc2.NewBufferedStream(
+		stream{},
+		jsonrpc2.VSCodeObjectCodec{}),
+		&rpcHandler{},
+	)
 	<-conn.DisconnectNotify()
 }
