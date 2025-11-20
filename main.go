@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -15,6 +16,8 @@ import (
 type rpcHandler struct{}
 
 var documents map[protocol.DocumentUri]string
+
+var ErrDefinitionNotFound = errors.New("definition not found")
 
 func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, request *jsonrpc2.Request) {
 	switch request.Method {
@@ -76,7 +79,7 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 				break
 			}
 		}
-		for k := 0; int(params.Position.Character)+k <= len(line); k++ {
+		for k := 0; int(params.Position.Character)+k < len(line); k++ {
 			if string(line[character+k]) == " " ||
 				string(line[character+k]) == "," ||
 				string(line[character+k]) == "(" ||
@@ -85,7 +88,15 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 				break
 			}
 		}
-		definitionRange, _ := getDefinitionRange([]byte(text), line[begin:end])
+		definitionRange, err := getDefinitionRange([]byte(text), line[begin:end])
+		if err != nil {
+			conn.ReplyWithError(context, request.ID,
+				&jsonrpc2.Error{
+					Code:    int64(protocol.ErrorCodesInvalidParams),
+					Message: err.Error(),
+				})
+			return
+		}
 		result := protocol.Location{Range: definitionRange, Uri: params.TextDocument.Uri}
 		conn.Reply(context, request.ID, result)
 	case "textDocument/didOpen":
@@ -181,7 +192,7 @@ func getDefinitionRange(text []byte, word string) (protocol.Range, error) {
 			}, nil
 		}
 	}
-	return protocol.Range{}, nil
+	return protocol.Range{}, ErrDefinitionNotFound
 }
 
 type stream struct {
