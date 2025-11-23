@@ -68,13 +68,16 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 		lines := strings.Split(text, "\n")
 		line := string(lines[params.Position.Line])
 		character := int(params.Position.Character)
-		var begin int
-		var end int
-		for i := 0; character+i > 0; i-- {
-			if string(line[character+i]) == " " ||
-				string(line[character+i]) == "," ||
-				string(line[character+i]) == "(" ||
-				string(line[character+i]) == ")" {
+		begin := -1
+		end := -1
+		var leftStop string
+		for i := 0; character+i >= 0; i-- {
+			leftStop = string(line[character+i])
+			if leftStop == " " ||
+				leftStop == "," ||
+				leftStop == "(" ||
+				leftStop == ")" ||
+				leftStop == "$" {
 				begin = character + i + 1
 				break
 			}
@@ -87,6 +90,17 @@ func (h *rpcHandler) Handle(context context.Context, conn *jsonrpc2.Conn, reques
 				end = character + k
 				break
 			}
+		}
+		if leftStop == "$" && end == -1 {
+			end = begin + 1
+		}
+		if begin == -1 || end == -1 {
+			conn.ReplyWithError(context, request.ID,
+				&jsonrpc2.Error{
+					Code:    int64(protocol.ErrorCodesInvalidParams),
+					Message: "failed reading symbol",
+				})
+			return
 		}
 		definitionRange, err := getDefinitionRange([]byte(text), line[begin:end])
 		if err != nil {
